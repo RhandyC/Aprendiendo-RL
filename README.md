@@ -1,5 +1,5 @@
 # Aprendiendo-RL
-Este es un repositorio con codigos basicos en pytohn explorando diferentes metodos orientado al RL
+Este es un repositorio con codigos basicos en python explorando diferentes metodos orientado al RL
 
 ## 🔁 Value Iteration
 
