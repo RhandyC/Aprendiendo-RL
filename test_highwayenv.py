@@ -1,7 +1,6 @@
 import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
 from stable_baselines3 import DQN
-
 import highway_env  # noqa: F401
 
 
@@ -10,6 +9,7 @@ TRAIN = False
 if __name__ == "__main__":
     # Create the environment
     env = gym.make("highway-fast-v0", render_mode="rgb_array")
+    env.unwrapped.config["collision_reward"] = -2 
     obs, info = env.reset()
 
     # Create the model
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     # Train the model
     if TRAIN:
-        model.learn(total_timesteps=20000)
+        model.learn(total_timesteps=80000)
         model.save("highway_dqn/model")
         del model
 
@@ -42,14 +42,14 @@ if __name__ == "__main__":
     )
     env.unwrapped.config["simulation_frequency"] = 15  # Higher FPS for rendering
     env.unwrapped.config["duration"] = 60 
-    env.unwrapped.config["show_trajectories"] = True 
-    env.unwrapped.config["lanes_count"] = 4 
-    env.unwrapped.config["real_time_rendering"] = True
+    # env.unwrapped.config["show_trajectories"] = True 
+    # env.unwrapped.config["lanes_count"] = 4 
+    # env.unwrapped.config["real_time_rendering"] = True
     
 
     env.unwrapped.set_record_video_wrapper(env)
 
-    for videos in range(2):
+    for videos in range(10):
         done = truncated = False
         obs, info = env.reset()
         while not (done or truncated):
