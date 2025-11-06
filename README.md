@@ -19,3 +19,9 @@ Donde:
 - `γ` es el factor de descuento
 3. **Convergencia**: Se repite el paso anterior hasta que el cambio en los valores sea menor que un umbral.
 4. **Derivación de la política**: Con los valores estables, se elige la mejor acción para cada estado.
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux
+pip install -r requirements.txt
+```
