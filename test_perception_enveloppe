@@ -53,7 +53,7 @@ class VehiclePerception:
         """Calcula el rango efectivo basado en condiciones climáticas"""
         return self.sensor_range * self.weather_factors[self.weather_condition]
     
-    def ray_cast_visibility(self, ego_pos, obstacles, num_rays=360):
+    def ray_cast_visibility(self, ego_pos, obstacles, num_rays=360, centerlanes):
         """Realiza ray casting para determinar áreas visibles y ocluidas"""
         effective_range = self.get_effective_range()
         angles = np.linspace(0, 2 * np.pi, num_rays)
@@ -65,6 +65,11 @@ class VehiclePerception:
             
             for obstacle in obstacles:
                 intersection_dist = self.ray_rectangle_intersection(ego_pos, ray_end, obstacle)
+                if intersection_dist is not None and intersection_dist < min_distance:
+                    min_distance = intersection_dist
+            
+            for centerlane in centerlanes:
+                intersection_dist = self.ray_centerlane_intersection(ego_pos, ray_end, centerlane)
                 if intersection_dist is not None and intersection_dist < min_distance:
                     min_distance = intersection_dist
             
@@ -94,8 +99,21 @@ class VehiclePerception:
                     min_distance = dist
 
         return min_distance
-
     
+    def ray_centerlane_intersection(self, ray_start, ray_end, centerlane):
+        """Calcula intersección entre rayo y rectángulo (bounding box)"""
+        [x, y]= centerlane
+
+        min_distance = None
+
+        intersection = self.line_line_intersection(ray_start, ray_end, (x[0],y[0]), (x[len(centerlane)],y[len(centerlane)]))
+        if intersection is not None:
+            dist = np.linalg.norm(intersection - ray_start)
+            if min_distance is None or dist < min_distance:
+                min_distance = dist
+
+        return min_distance
+
     def line_line_intersection(self, A, B, C, D):
         """Calcula intersección entre dos segmentos de línea"""
         A = np.array(A, dtype=float)
@@ -149,10 +167,17 @@ class Simulation:
         # Definir bus como bounding box [x, y, width, height]
         self.bus = np.array([40.0, -2.0, 12.0, 4.0])  # Posición y dimensiones
         
+        initial_point = (40,10)
+        final_point = (50, 80)
+        self.intersection = np.array([[initial_point],   # punto inicial
+                              [final_point]])  # punto final
+
         # Otros obstáculos (edificios, otros vehículos)
         self.obstacles = [
             self.bus
         ]
+
+        self.centerlanes = [self.intersection]
         
         self.frame_count = 0
         self.visibility_data = []
@@ -187,7 +212,7 @@ class Simulation:
         
         # Calcular visibilidad
         angles, visibility = self.vehicle.perception.ray_cast_visibility(
-            self.vehicle.position, self.obstacles
+            self.vehicle.position, self.obstacles, self.centerlanes
         )
         
         # Calcular métricas
