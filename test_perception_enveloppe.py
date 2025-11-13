@@ -175,7 +175,7 @@ class AutonomousVehicle:
     def __init__(self, initial_pos=np.array([0.0, 0.0])):
         self.position = initial_pos
         self.current_target_idx = 0
-        self.speed = 8.0  # m/s
+        self.speed = 4.0  # m/s
         self.perception = VehiclePerception()
         self.trajectory = [
             (0.0, 0.0),
@@ -439,7 +439,7 @@ print("Iniciando simulación de evolución de envolvente de percepción...")
 sim = Simulation()
 
 # Crear animación
-animation = FuncAnimation(sim.fig, sim.update, frames=240, interval=50, blit=False)
+animation = FuncAnimation(sim.fig, sim.update, frames=600, interval=1, blit=False)
 
 plt.show()
 
