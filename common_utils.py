@@ -181,6 +181,7 @@ class Simulation:
         if usecase == "empty":
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
+            self.speed_obstacle = 0.0
             # Other obstacles (buildings, other vehicles)
             self.obstacles = [
             ]
@@ -193,7 +194,7 @@ class Simulation:
         elif usecase == "angle_joint": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-            
+            self.speed_obstacle = 8.0
             # New irregular obstacle
             angle = np.pi/5
             ego_lane_width = 7.5
@@ -243,7 +244,7 @@ class Simulation:
         elif usecase == "bus_overtaking": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-            
+            self.speed_obstacle = 2.0
             # New bus obstacle
             angle = np.pi/3
             ego_lane_width = 7.5
@@ -276,7 +277,7 @@ class Simulation:
         elif usecase == "lane_change_highway": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-
+            self.speed_obstacle = 20.0
             lane_change = [
                 (0.0, 0.0),
                 (0.0, 1.0),
@@ -285,7 +286,7 @@ class Simulation:
                 (0.0, 4.0),
                 (0.0, 5.0)
             ] 
-            
+
             self.vehicle.redefined_trajectory(lane_change)
 
             # New bus obstacle
@@ -325,7 +326,7 @@ class Simulation:
         elif usecase == "t_joint": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-
+            self.speed_obstacle = 8.0
             # Obstacles defined as 4-edge polygones 
             corner1_poly = rect_to_poly([-50.0, -55.0, 100.0, 50.0])
             corner2_poly = rect_to_poly([-50.0, 10.0, 100.0, 50.0])
@@ -365,7 +366,7 @@ class Simulation:
         elif usecase == "roundbout": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-
+            self.speed_obstacle = 8.0
 
             roundabout_poly = create_roundabout(center=(50, 0), radius=15)
 
@@ -395,9 +396,16 @@ class Simulation:
     def update_weather_conditions(self):
         """Simulates changes in weather conditions and resets upon change"""
         conditions = ["clear", "rain", "fog", "heavy_fog"]
-        condition_idx = (self.frame_count // 150) % len(conditions)
+        condition_idx = (self.frame_count // 150)
+        print(condition_idx)
+
+        if condition_idx >= len(conditions):
+            plt.close(self.fig)  # Cierra la ventana de la animación
+            return  # 🔴 Importante: salir de la función aquí
+
+        # Si no cerramos, sí definimos la nueva condición
         new_condition = conditions[condition_idx]
-        
+
         # Detect weather change
         if new_condition != self.vehicle.perception.weather_condition:
             self.vehicle.perception.weather_condition = new_condition
@@ -442,7 +450,7 @@ class Simulation:
                 v_ego=self.vehicle.speed,
                 acc_confort=2.5,
                 t_reaction=0.5,
-                v_other=50.0/3.6,
+                v_other=self.speed_obstacle,
                 priority=False
             )
             
@@ -489,8 +497,8 @@ class Simulation:
     def plot_scenario(self, angles, visibility, visible_ratio, avg_distance, intersection_points):
         """Visualizes the complete scenario"""
         # Configure the plot
-        self.ax.set_xlim(-100, 100)
-        self.ax.set_ylim(-100, 100)
+        # self.ax.set_xlim(-100, 100)
+        # self.ax.set_ylim(-100, 100)
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         
@@ -511,7 +519,8 @@ class Simulation:
                 init_point[0], init_point[1],
                 dx, dy,
                 head_width=2, head_length=8,
-                fc='blue', ec='blue'
+                fc='blue', ec='blue',
+                linewidth=2
             )
 
             self.ax.text(
