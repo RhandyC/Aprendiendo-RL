@@ -11,57 +11,144 @@ from shapely.geometry import LineString, Point
 import math
 
 def compute_visibility_polygon(ego_pos, angles, visibility):
-    """Construye el polígono de visibilidad real a partir del ray casting"""
+    """Builds the real visibility polygon from ray casting"""
     points = [ego_pos + visibility[i] * np.array([np.cos(angles[i]), np.sin(angles[i])]) 
               for i in range(len(angles))]
     return Polygon(points)
 
-def compute_required_envelope(ego_pos, trajectory, centerlanes, v_ego, acc_confort, t_reaction, v_other, priority=False):
+def compute_required_envelope(ego_pos, trajectory, centerlane, v_ego, acc_confort, t_reaction, v_other, priority=False):
     """
-    Calcula la envolvente mínima de percepción necesaria basándose en la intersección
-    de la trayectoria del ego con las centerlanes y la distancia mínima requerida.
+    Calculates the minimum required perception envelope based on the intersection
+    of the ego's trajectory with the centerlanes and the required minimum distance.
     """
     d_required = compute_drequired_for_trajectory(v_ego, acc_confort, priority, t_reaction, v_other)
-    
-    ego_line = LineString(trajectory)  # tu trayectoria
+    ego_line = LineString(trajectory)  # your trajectory
     envelope_points = []
 
-    # Para cada centerlane
-    for lane in centerlanes:
-        lane_line = LineString(lane)
-        inter = ego_line.intersection(lane_line)
+    # For each centerlane
+    # for lane in centerlanes:
+    #     lane_line = LineString(lane)
+    #     inter = ego_line.intersection(lane_line)
         
-        if inter.is_empty:
-            continue
+    #     if inter.is_empty:
+    #         continue
         
-        # Si es un punto de intersección
-        if isinstance(inter, Point):
-            envelope_points.append(np.array([inter.x, inter.y]))
-            # Proyectamos hacia atras una distancia d_required en la dirección de la lane
-            direction = np.array(lane[1]) - np.array(lane[0])
+    #     # If it's an intersection point
+    #     if isinstance(inter, Point):
+    #         envelope_points.append(np.array([inter.x, inter.y]))
+    #         # We project backwards a distance d_required in the direction of the lane
+    #         direction = np.array(lane[1]) - np.array(lane[0])
+    #         direction = direction / np.linalg.norm(direction)
+    #         projected_point = np.array([inter.x, inter.y]) - d_required * direction
+    #         envelope_points.append(projected_point)
+        
+    #     # If there are multiple points (LineString/ MultiPoint)
+    #     else:
+    #         for p in inter.geoms:
+    #             direction = np.array(lane[1]) - np.array(lane[0])
+    #             direction = direction / np.linalg.norm(direction)
+    #             projected_point = np.array([p.x, p.y]) + d_required * direction
+    #             envelope_points.append(projected_point)
+
+
+    lane_line = LineString(centerlane)
+    inter = ego_line.intersection(lane_line)
+    
+    # if inter.is_empty:
+    #     return envelope_points
+    
+    # If it's an intersection point
+    if isinstance(inter, Point):
+        envelope_points.append(np.array([inter.x, inter.y]))
+        # We project backwards a distance d_required in the direction of the lane
+        direction = np.array(centerlane[1]) - np.array(centerlane[0])
+        direction = direction / np.linalg.norm(direction)
+        projected_point = np.array([inter.x, inter.y]) - d_required * direction
+        envelope_points.append(projected_point)
+    
+    # If there are multiple points (LineString/ MultiPoint)
+    else:
+        for p in inter.geoms:
+            direction = np.array(centerlane[1]) - np.array(centerlane[0])
             direction = direction / np.linalg.norm(direction)
-            projected_point = np.array([inter.x, inter.y]) - d_required * direction
+            projected_point = np.array([p.x, p.y]) + d_required * direction
             envelope_points.append(projected_point)
-        
-        # Si hay múltiples puntos (LineString/ MultiPoint)
-        else:
-            for p in inter.geoms:
-                direction = np.array(lane[1]) - np.array(lane[0])
-                direction = direction / np.linalg.norm(direction)
-                projected_point = np.array([p.x, p.y]) + d_required * direction
-                envelope_points.append(projected_point)
 
-    return envelope_points  # lista de np.array con los puntos verdes a dibujar
+    return envelope_points  # list of np.array with the green points to draw
 
 
-def compute_visibility_coefficient(real_env, required_env):
-    """Calcula el coeficiente de visibilidad"""
-    intersection_area = real_env.intersection(required_env).area
-    required_area = required_env.area
-    return intersection_area / required_area
+def compute_visibility_coefficient(real_env, required_env, centerlane):
+    """Calculates the visibility coefficient"""
+
+    real_st = [global_to_st(p, centerlane) for p in real_env]
+    required_st = [global_to_st(p, centerlane) for p in required_env]
+
+    # Extract only the longitudinal s-axis
+    real_s = [s for s, _ in real_st]
+    required_s = [s for s, _ in required_st]
+
+    # If there are no points in real_s or required_s, there is no intersection
+    if len(real_s) == 0 or len(required_s) == 0:
+        return 0.0, (None, None)
+
+    # Calculate overlapping intervals in s
+    sA_min, sA_max = np.min(required_s), np.max(required_s)
+    sB_min, sB_max = np.min(real_s), np.max(real_s)
+
+    inter_min = max(sA_min, sB_min)
+    inter_max = min(sA_max, sB_max)
+
+    if inter_max <= inter_min:
+        intersection_length = 0.0
+    else:
+        intersection_length = inter_max - inter_min
+
+    length_A = sA_max - sA_min
+    ratio = intersection_length / length_A if length_A > 0 else 0.0
+
+    if ratio > 0:
+        inter_init_point = st_to_global(inter_min, 0, centerlane)
+        inter_last_point = st_to_global(inter_max, 0, centerlane)
+    else:
+        inter_init_point, inter_last_point = None, None
+
+    return ratio, (inter_init_point, inter_last_point)
+
+
+def global_to_st(point, centerlane):
+    """
+    Converts a point (x,y) in global coordinates to the local (s,t) system
+    defined by the first two points of centerlane.
+    """
+    origin = np.array(centerlane[0])
+    direction = np.array(centerlane[1]) - origin
+    direction = direction / np.linalg.norm(direction)  # normalize
+
+    # perpendicular vector (90° counter-clockwise rotation)
+    perp = np.array([-direction[1], direction[0]])
+
+    # global->local rotation matrix
+    R = np.column_stack((direction, perp))  # [s_axis | t_axis]
+
+    # vector from origin to the point
+    vec = np.array(point) - origin
+
+    # local coordinates (s, t)
+    local = R.T @ vec
+    s, t = local[0], local[1]
+    return s, t
+
+def st_to_global(s, t, centerlane):
+    origin = np.array(centerlane[0])
+    direction = np.array(centerlane[1]) - origin
+    direction = direction / np.linalg.norm(direction)
+    perp = np.array([-direction[1], direction[0]])
+    R = np.column_stack((direction, perp))
+    return origin + R @ np.array([s, t])
+
 
 def compute_drequired_for_trajectory(v_ego, acc_confort, priority, t_reaction, v_other): 
-    """Calcula la distancia minima respecto a una cierta aceleracion y un tiempo de reaccion"""
+    """Calculates the minimum distance with respect to a certain acceleration and reaction time"""
     if priority: 
         return 0
     else:
@@ -79,11 +166,11 @@ class VehiclePerception:
         }
         
     def get_effective_range(self):
-        """Calcula el rango efectivo basado en condiciones climáticas"""
+        """Calculates the effective range based on weather conditions"""
         return self.sensor_range * self.weather_factors[self.weather_condition]
     
     def ray_cast_visibility(self, ego_pos, obstacles, centerlanes, num_rays=360):
-        """Realiza ray casting para determinar áreas visibles y ocluidas"""
+        """Performs ray casting to determine visible and occluded areas"""
         effective_range = self.get_effective_range()
         angles = np.linspace(0, 2 * np.pi, num_rays)
         visibility_map = np.zeros(num_rays)
@@ -92,7 +179,7 @@ class VehiclePerception:
         for i, angle in enumerate(angles):
             ray_end = ego_pos + effective_range * np.array([np.cos(angle), np.sin(angle)])
             min_distance = effective_range
-            intersection_point = None  # <--- nuevo
+            intersection_point = None  # <--- new
             
             for obstacle in obstacles:
                 intersection_dist = self.ray_rectangle_intersection(ego_pos, ray_end, obstacle)
@@ -104,22 +191,21 @@ class VehiclePerception:
                 if intersection_dist is not None and intersection_dist < min_distance:
                     # min_distance = intersection_dist
                     intersection_point = point 
-                    
-                visibility_points.append(intersection_point)
+                    visibility_points.append(intersection_point)
             visibility_map[i] = min_distance
 
         return angles, visibility_map, visibility_points
     
     def ray_rectangle_intersection(self, ray_start, ray_end, rectangle):
-        """Calcula intersección entre rayo y rectángulo (bounding box)"""
+        """Calculates intersection between ray and rectangle (bounding box)"""
         x, y, w, h = rectangle
 
-        # Lados del rectángulo
+        # Sides of the rectangle
         sides = [
-            [(x, y), (x + w, y)],         # inferior
-            [(x + w, y), (x + w, y + h)], # derecha
-            [(x + w, y + h), (x, y + h)], # superior
-            [(x, y + h), (x, y)]          # izquierda
+            [(x, y), (x + w, y)],         # bottom
+            [(x + w, y), (x + w, y + h)], # right
+            [(x + w, y + h), (x, y + h)], # top
+            [(x, y + h), (x, y)]          # left
         ]
 
         min_distance = None
@@ -134,7 +220,7 @@ class VehiclePerception:
         return min_distance
     
     def ray_centerlane_intersection(self, ray_start, ray_end, centerlane):
-        """Calcula intersección entre rayo y línea del carril central"""
+        """Calculates intersection between ray and center lane line"""
         [init_point, final_point] = centerlane
         intersection = self.line_line_intersection(ray_start, ray_end, init_point, final_point)
         
@@ -145,7 +231,7 @@ class VehiclePerception:
         return None, None
 
     def line_line_intersection(self, A, B, C, D):
-        """Calcula intersección entre dos segmentos de línea"""
+        """Calculates intersection between two line segments"""
         A = np.array(A, dtype=float)
         B = np.array(B, dtype=float)
         C = np.array(C, dtype=float)
@@ -154,13 +240,13 @@ class VehiclePerception:
         def cross(o, a, b):
             return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
         
-        # Vectores
+        # Vectors
         r = B - A
         s = D - C
         cross_rs = r[0] * s[1] - r[1] * s[0]
         
         if abs(cross_rs) < 1e-10:
-            return None  # Líneas paralelas
+            return None  # Parallel lines
         
         q_minus_p = C - A
         t = (q_minus_p[0] * s[1] - q_minus_p[1] * s[0]) / cross_rs
@@ -188,9 +274,9 @@ class AutonomousVehicle:
         
     def move_along_trajectory(self, dt=0.1):
         if self.current_target_idx >= len(self.trajectory):
-            return  # Ya llegó al final de la trayectoria
+            return  # Already reached the end of the trajectory
 
-        # Convertir los puntos a arrays al momento de usarlos
+        # Convert points to arrays when using them
         target = np.array(self.trajectory[self.current_target_idx])
         position = np.array(self.position)
 
@@ -210,10 +296,10 @@ class Simulation:
         self.fig, self.ax = plt.subplots(figsize=(12, 8))
         self.vehicle = AutonomousVehicle()
         
-        # Definir bus como bounding box [x, y, width, height]
+        # Define bus as a bounding box [x, y, width, height]
         self.bus = np.array([40.0, -2.0, 12.0, 4.0])
-        self.corner1 =  np.array([-50.0, -55.0, 100.0, 50.0]) # Posición y dimensiones
-        self.corner2 =  np.array([-50.0, 10.0, 100.0, 50.0]) # Posición y dimensiones
+        self.corner1 =  np.array([-50.0, -55.0, 100.0, 50.0]) # Position and dimensions
+        self.corner2 =  np.array([-50.0, 10.0, 100.0, 50.0]) # Position and dimensions
 
         
         initial_point = (55.0, -50.0)
@@ -224,10 +310,10 @@ class Simulation:
         final_point = (52.0 , -50.0)
         self.down = [initial_point, final_point]
         
-        # np.array([[initial_point],   # punto inicial
-        #                       [final_point]])  # punto final
+        # np.array([[initial_point],   # initial point
+        #                       [final_point]])  # final point
 
-        # Otros obstáculos (edificios, otros vehículos)
+        # Other obstacles (buildings, other vehicles)
         self.obstacles = [
             self.corner1,
             self.corner2
@@ -242,18 +328,18 @@ class Simulation:
         self.visibility_data = []
         
     def update_weather_conditions(self):
-        """Simula cambios en condiciones climáticas y reinicia al cambiar"""
+        """Simulates changes in weather conditions and resets upon change"""
         conditions = ["clear", "rain", "fog", "heavy_fog"]
         condition_idx = (self.frame_count // 150) % len(conditions)
         new_condition = conditions[condition_idx]
         
-        # Detectar cambio de clima
+        # Detect weather change
         if new_condition != self.vehicle.perception.weather_condition:
             self.vehicle.perception.weather_condition = new_condition
             self.reset_simulation_state()
             
     def calculate_visibility_metrics(self, angles, visibility):
-        """Calcula métricas de visibilidad"""
+        """Calculates visibility metrics"""
         effective_range = self.vehicle.perception.get_effective_range()
         visible_ratio = np.sum(visibility >= effective_range * 0.95) / len(visibility)
         avg_visible_distance = np.mean(visibility)
@@ -265,103 +351,149 @@ class Simulation:
         self.frame_count = frame
         self.update_weather_conditions()
         
-        # Mover vehículo hacia adelante
+        # Move vehicle forward
         self.vehicle.move_along_trajectory()
 
-        # Calcular visibilidad
+        # Calculate visibility
         angles, visibility, intersection_points = self.vehicle.perception.ray_cast_visibility(
             self.vehicle.position, self.obstacles, self.centerlanes
         )
-        # Calcular métricas
+        # Calculate metrics
         visible_ratio, avg_distance = self.calculate_visibility_metrics(angles, visibility)
         # self.visibility_data.append((distance_to_bus, visible_ratio, avg_distance))
         
-        # Visualización
+        # Visualization
         self.plot_scenario(angles, visibility, visible_ratio, avg_distance, intersection_points)
 
-        # Crear polígonos
+        # Create polygons
         real_env = compute_visibility_polygon(self.vehicle.position, angles, visibility)
         # required_env_array = compute_required_envelope(self.vehicle.position)
-        # required_env = Polygon(required_env_array)  # ahora es un Polygon
+        # required_env = Polygon(required_env_array)  # now it's a Polygon
 
-        # # Dibujar la envolvente como un polígono azul semitransparente
+        # # Draw the envelope as a semi-transparent blue polygon
         # self.ax.fill(
         #     required_env_array[:, 0], required_env_array[:, 1],
-        #     color='blue', alpha=0.2, label='Envolvente requerida'
+        #     color='blue', alpha=0.2, label='Required envelope'
         # )
+        text_lines = []
 
-        # try:
-        #     C_v = compute_visibility_coefficient(real_env, required_env)
-        # except TopologicalError:
-        #     C_v = 0.0
+        for idx, centerlane in enumerate(self.centerlanes):
+            required_env = compute_required_envelope(
+                self.vehicle.position,
+                self.vehicle.trajectory,
+                centerlane,
+                v_ego=self.vehicle.speed,
+                acc_confort=2.5,
+                t_reaction=0.5,
+                v_other=50.0/3.6,
+                priority=False
+            )
+            
+            # Draw green points projected onto the lanes
+            for p in required_env:
+                self.ax.plot(p[0], p[1], 'go', markersize=5)
+            
+            # Calculate visibility coefficient
+            try:
+                C_v, (inter_init_point, inter_last_point) = compute_visibility_coefficient(
+                    intersection_points, required_env, centerlane
+                )
+            except TopologicalError:
+                C_v = 0.0
+                inter_init_point = inter_last_point = None
 
-        # Mostrar el coeficiente en el plot
-        # self.ax.text(0.7, 0.05, f"Coef. visibilidad: {C_v:.2f}", transform=self.ax.transAxes,
-        #             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+            # Draw intersection segment if it exists
+            if inter_init_point is not None and inter_last_point is not None:
+                self.ax.plot(
+                    [inter_init_point[0], inter_last_point[0]],
+                    [inter_init_point[1], inter_last_point[1]],
+                    'b-o', markersize=2, linewidth=2, label=f'Intersection lane {idx+1}'
+                )
+            
+            # Save text for each lane
+            text_lines.append(f"Lane {idx+1}: C_v = {C_v:.2f}")
+
+        # Display all coefficients in the plot
+        text_str = "\n".join(text_lines)
+        self.ax.text(
+            0.7, 0.05, text_str,
+            transform=self.ax.transAxes,
+            verticalalignment='bottom',
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8)
+        )
         
         return []
     
     def plot_scenario(self, angles, visibility, visible_ratio, avg_distance, intersection_points):
-        """Visualiza el escenario completo"""
-        # Configurar el plot
+        """Visualizes the complete scenario"""
+        # Configure the plot
         self.ax.set_xlim(-100, 100)
         self.ax.set_ylim(-100, 100)
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         
-        # Dibujar obstáculos
+        # Draw obstacles
         for obstacle in self.obstacles:
             x, y, w, h = obstacle
             rect = patches.Rectangle((x, y), w, h, linewidth=2, 
                                    edgecolor='red', facecolor='darkred', alpha=0.7)
             self.ax.add_patch(rect)
         
-        # Dibujar centerlanes
-        for centerlane in self.centerlanes:
-            [init_point, final_point] = centerlane
-            # self.ax.plot(   [init_point[0], final_point[0]],
-            #                 [init_point[1], final_point[1]],
-            #                 color='blue',
-            #                 linewidth=2,
-            #                 label='Centerlane')
-        
+        # Draw centerlanes
+        for idx, centerlane in enumerate(self.centerlanes):
+            init_point, final_point = centerlane
             dx = final_point[0] - init_point[0]
             dy = final_point[1] - init_point[1]
 
-            self.ax.arrow(init_point[0], init_point[1], dx, dy, head_width=2, head_length=8, fc='blue', ec='blue')
+            # Draw the arrow
+            self.ax.arrow(
+                init_point[0], init_point[1],
+                dx, dy,
+                head_width=2, head_length=8,
+                fc='blue', ec='blue'
+            )
 
+            self.ax.text(
+                init_point[0], init_point[1],
+                f"Lane {idx+1}",
+                color='black',
+                fontsize=10,
+                fontweight='bold',
+                ha='center',
+                va='bottom'
+            )
             
         for p in intersection_points:
             if p is not None:
                 self.ax.plot(p[0], p[1], 'ro', markersize=4) 
 
-        # Calcular puntos requeridos según la fórmula
-        d_required_points = compute_required_envelope(self.vehicle.position,
-                                                    self.vehicle.trajectory,
-                                                    self.centerlanes,
-                                                    v_ego=self.vehicle.speed,
-                                                    acc_confort=2.5,
-                                                    t_reaction=0.5,
-                                                    v_other=50.0/3.6,
-                                                    priority=False)
-        # Dibujar puntos verdes proyectados sobre las lanes
-        for p in d_required_points:
-            self.ax.plot(p[0], p[1], 'go', markersize=5)  # 'go' = green circle
+        # # Calculate required points according to the formula
+        # d_required_points = compute_required_envelope(self.vehicle.position,
+        #                                             self.vehicle.trajectory,
+        #                                             self.centerlanes,
+        #                                             v_ego=self.vehicle.speed,
+        #                                             acc_confort=2.5,
+        #                                             t_reaction=0.5,
+        #                                             v_other=50.0/3.6,
+        #                                             priority=False)
+        # # Draw green points projected onto the lanes
+        # for p in d_required_points:
+        #     self.ax.plot(p[0], p[1], 'go', markersize=5)  # 'go' = green circle
 
-        # Dibujar vehículo autónomo
+        # Draw autonomous vehicle
         vehicle_circle = patches.Circle(self.vehicle.position, radius=1.5, 
                                       facecolor='blue', edgecolor='darkblue', linewidth=2)
         self.ax.add_patch(vehicle_circle)
         
-        # Dibujar envolvente de percepción
+        # Draw perception envelope
         effective_range = self.vehicle.perception.get_effective_range()
         
-        # Área completamente visible
+        # Completely visible area
         visible_circle = patches.Circle(self.vehicle.position, effective_range, 
                                       fill=False, edgecolor='green', linestyle='--', alpha=0.5)
         self.ax.add_patch(visible_circle)
         
-        # Visualizar rayos (solo algunos para no saturar)
+        # Visualize rays (only some to avoid clutter)
         num_show_rays = 100
         step = len(angles) // num_show_rays
         
@@ -381,52 +513,52 @@ class Simulation:
                         [self.vehicle.position[1], end_point[1]], 
                         color=color, alpha=alpha, linewidth=1)
         
-        # Información del estado
+        # Status information
         info_text = (f"Frame: {self.frame_count}\n"
-                    f"Condición: {self.vehicle.perception.weather_condition}\n"
-                    f"Rango efectivo: {effective_range:.1f}m\n"
-                    f"Área visible: {visible_ratio*100:.1f}%\n"
-                    f"Dist. visible prom: {avg_distance:.1f}m")
+                    f"Condition: {self.vehicle.perception.weather_condition}\n"
+                    f"Effective Range: {effective_range:.1f}m\n"
+                    f"Visible Area: {visible_ratio*100:.1f}%\n"
+                    f"Avg. Visible Dist: {avg_distance:.1f}m")
         
         self.ax.text(0.02, 0.98, info_text, transform=self.ax.transAxes, 
                     verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
-        self.ax.set_title(f"Evolución de Envolvente de Percepción - Frame {self.frame_count}")
+        self.ax.set_title(f"Evolution of Perception Envelope - Frame {self.frame_count}")
 
     def reset_simulation_state(self):
-        """Reinicia la posición y datos de la simulación"""
+        """Resets the simulation's position and data"""
         self.vehicle.position = np.array([0.0, 0.0])
         self.visibility_data.clear()
-        print(f"--- Reiniciando simulación por cambio climático: {self.vehicle.perception.weather_condition} ---")
+        print(f"--- Resetting simulation due to weather change: {self.vehicle.perception.weather_condition} ---")
 
 
 def plot_visibility_evolution(simulation):
-    """Grafica la evolución de la visibilidad a lo largo del tiempo"""
+    """Graphs the evolution of visibility over time"""
     if len(simulation.visibility_data) == 0:
         return
     
     distances = [data[0] for data in simulation.visibility_data]
-    visible_ratios = [data[1] * 100 for data in simulation.visibility_data]  # Porcentaje
+    visible_ratios = [data[1] * 100 for data in simulation.visibility_data]  # Percentage
     avg_distances = [data[2] for data in simulation.visibility_data]
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
     
-    # Gráfico de área visible vs distancia
-    ax1.plot(distances, visible_ratios, 'b-', linewidth=2, label='Área Visible (%)')
-    ax1.set_xlabel('Distancia al Bus (m)')
-    ax1.set_ylabel('Porcentaje de Área Visible (%)')
-    ax1.set_title('Evolución del Área Visible vs Distancia al Bus')
+    # Visible area vs distance graph
+    ax1.plot(distances, visible_ratios, 'b-', linewidth=2, label='Visible Area (%)')
+    ax1.set_xlabel('Distance to Bus (m)')
+    ax1.set_ylabel('Percentage of Visible Area (%)')
+    ax1.set_title('Evolution of Visible Area vs Distance to Bus')
     ax1.grid(True, alpha=0.3)
     ax1.legend()
-    ax1.invert_xaxis()  # Porque la distancia disminuye
+    ax1.invert_xaxis()  # Because the distance decreases
     
-    # Gráfico de distancia visible promedio
-    ax2.plot(distances, avg_distances, 'g-', linewidth=2, label='Distancia Visible Promedio')
+    # Average visible distance graph
+    ax2.plot(distances, avg_distances, 'g-', linewidth=2, label='Average Visible Distance')
     ax2.axhline(y=simulation.vehicle.perception.sensor_range, color='r', linestyle='--', 
-                label='Rango Máximo del Sensor')
-    ax2.set_xlabel('Distancia al Bus (m)')
-    ax2.set_ylabel('Distancia Visible (m)')
-    ax2.set_title('Evolución de la Distancia Visible Promedio')
+                label='Maximum Sensor Range')
+    ax2.set_xlabel('Distance to Bus (m)')
+    ax2.set_ylabel('Visible Distance (m)')
+    ax2.set_title('Evolution of Average Visible Distance')
     ax2.grid(True, alpha=0.3)
     ax2.legend()
     ax2.invert_xaxis()
@@ -434,14 +566,14 @@ def plot_visibility_evolution(simulation):
     plt.tight_layout()
     plt.show()
 
-# Ejecutar simulación
-print("Iniciando simulación de evolución de envolvente de percepción...")
+# Run simulation
+print("Starting perception envelope evolution simulation...")
 sim = Simulation()
 
-# Crear animación
+# Create animation
 animation = FuncAnimation(sim.fig, sim.update, frames=600, interval=1, blit=False)
 
 plt.show()
 
-# Al finalizar, mostrar gráficos de evolución
+# At the end, show evolution graphs
 plot_visibility_evolution(sim)
