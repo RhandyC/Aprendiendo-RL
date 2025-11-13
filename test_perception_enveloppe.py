@@ -25,37 +25,8 @@ def compute_required_envelope(ego_pos, trajectory, centerlane, v_ego, acc_confor
     ego_line = LineString(trajectory)  # your trajectory
     envelope_points = []
 
-    # For each centerlane
-    # for lane in centerlanes:
-    #     lane_line = LineString(lane)
-    #     inter = ego_line.intersection(lane_line)
-        
-    #     if inter.is_empty:
-    #         continue
-        
-    #     # If it's an intersection point
-    #     if isinstance(inter, Point):
-    #         envelope_points.append(np.array([inter.x, inter.y]))
-    #         # We project backwards a distance d_required in the direction of the lane
-    #         direction = np.array(lane[1]) - np.array(lane[0])
-    #         direction = direction / np.linalg.norm(direction)
-    #         projected_point = np.array([inter.x, inter.y]) - d_required * direction
-    #         envelope_points.append(projected_point)
-        
-    #     # If there are multiple points (LineString/ MultiPoint)
-    #     else:
-    #         for p in inter.geoms:
-    #             direction = np.array(lane[1]) - np.array(lane[0])
-    #             direction = direction / np.linalg.norm(direction)
-    #             projected_point = np.array([p.x, p.y]) + d_required * direction
-    #             envelope_points.append(projected_point)
-
-
     lane_line = LineString(centerlane)
     inter = ego_line.intersection(lane_line)
-    
-    # if inter.is_empty:
-    #     return envelope_points
     
     # If it's an intersection point
     if isinstance(inter, Point):
@@ -147,6 +118,10 @@ def st_to_global(s, t, centerlane):
     return origin + R @ np.array([s, t])
 
 
+def rect_to_poly(rect):
+    x, y, w, h = rect
+    return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+
 def compute_drequired_for_trajectory(v_ego, acc_confort, priority, t_reaction, v_other): 
     """Calculates the minimum distance with respect to a certain acceleration and reaction time"""
     if priority: 
@@ -182,7 +157,8 @@ class VehiclePerception:
             intersection_point = None  # <--- new
             
             for obstacle in obstacles:
-                intersection_dist = self.ray_rectangle_intersection(ego_pos, ray_end, obstacle)
+                # intersection_dist = self.ray_rectangle_intersection(ego_pos, ray_end, obstacle)
+                intersection_dist = self.ray_polygon_intersection(ego_pos, ray_end, obstacle)
                 if intersection_dist is not None and intersection_dist < min_distance:
                     min_distance = intersection_dist
             
@@ -217,6 +193,29 @@ class VehiclePerception:
                 if min_distance is None or dist < min_distance:
                     min_distance = dist
 
+        return min_distance
+    
+    def ray_polygon_intersection(self, ray_start, ray_end, polygon_vertices):
+        """Calculates the closest intersection between a ray and a polygon's edges."""
+        min_distance = None
+
+        # Iterar sobre cada lado del polígono
+        for i in range(len(polygon_vertices)):
+            # El lado del polígono va desde el vértice i al vértice i+1
+            p1 = polygon_vertices[i]
+            p2 = polygon_vertices[(i + 1) % len(polygon_vertices)] # El % asegura que el último vértice conecte con el primero
+
+            # Comprobar la intersección del rayo con este lado
+            intersection_point = self.line_line_intersection(ray_start, ray_end, p1, p2)
+
+            if intersection_point is not None:
+                # Si hay intersección, calcular la distancia
+                dist = np.linalg.norm(intersection_point - ray_start)
+                
+                # Quedarse con la distancia más corta
+                if min_distance is None or dist < min_distance:
+                    min_distance = dist
+        
         return min_distance
     
     def ray_centerlane_intersection(self, ray_start, ray_end, centerlane):
@@ -301,7 +300,17 @@ class Simulation:
         self.corner1 =  np.array([-50.0, -55.0, 100.0, 50.0]) # Position and dimensions
         self.corner2 =  np.array([-50.0, 10.0, 100.0, 50.0]) # Position and dimensions
 
-        
+        # Obstacles defined as 4-edge polygones 
+        self.corner1_poly = rect_to_poly([-50.0, -55.0, 100.0, 50.0])
+        self.corner2_poly = rect_to_poly([-50.0, 10.0, 100.0, 50.0])
+
+        # New irregular obstacle
+        self.new_obstacle_poly = [
+            (30.0, -10.0), 
+            (50.0, -15.0), 
+            (55.0, 5.0), 
+            (35.0, 8.0)
+        ]
         initial_point = (55.0, -50.0)
         final_point = (55.0 , 50.0)
         self.up = [initial_point, final_point]
@@ -315,8 +324,8 @@ class Simulation:
 
         # Other obstacles (buildings, other vehicles)
         self.obstacles = [
-            self.corner1,
-            self.corner2
+            self.corner1_poly,
+            self.corner2_poly,
         ]
 
         self.centerlanes = [
@@ -433,11 +442,14 @@ class Simulation:
         self.ax.grid(True, alpha=0.3)
         
         # Draw obstacles
-        for obstacle in self.obstacles:
-            x, y, w, h = obstacle
-            rect = patches.Rectangle((x, y), w, h, linewidth=2, 
-                                   edgecolor='red', facecolor='darkred', alpha=0.7)
-            self.ax.add_patch(rect)
+        for obstacle_vertices in self.obstacles:
+            # x, y, w, h = obstacle
+            # rect = patches.Rectangle((x, y), w, h, linewidth=2, 
+            #                        edgecolor='red', facecolor='darkred', alpha=0.7)
+            # self.ax.add_patch(rect)
+            poly_patch = patches.Polygon(obstacle_vertices, closed=True, linewidth=2,
+                                 edgecolor='red', facecolor='darkred', alpha=0.7)
+            self.ax.add_patch(poly_patch)
         
         # Draw centerlanes
         for idx, centerlane in enumerate(self.centerlanes):
