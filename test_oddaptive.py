@@ -18,7 +18,7 @@ if __name__ == "__main__":
     # An example of customized env
     config = {
         "observation": {
-            "type": "Kinematics",
+            "type": "LidarObservation",
             "vehicles_count": 2,
             "features": ["presence", "x", "y"],
             "features_range": {
@@ -38,7 +38,16 @@ if __name__ == "__main__":
         "duration" : 60,
         "lanes_count": 2
     }
-    env = gym.make('my-highway-v0', config=config, render_mode='rgb_array')
+
+    config_lidar={
+        "observation": {
+            "type": "LidarObservation",
+            "cells": 360,
+        },
+        "vehicles_count": 3,
+    }
+
+    env = gym.make('intersection-v0', config=config_lidar, render_mode='rgb_array')
 
     env = RecordVideo(
         env, video_folder="record_test/videos", episode_trigger=lambda e: True
@@ -54,8 +63,8 @@ if __name__ == "__main__":
         action = 1
         # Get reward
         obs, reward, done, truncated, info = env.step(action)
-        print("Observation" + str(i))
-        print(obs)
+        # print("Observation" + str(i))
+        # print(obs)
         i=i+1
         # Render
         env.render()

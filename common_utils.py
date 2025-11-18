@@ -22,7 +22,9 @@ class AutonomousVehicle:
         ]
 
         self.length = 4.0    
-        self.width = 1.8      
+        self.width = 1.8   
+        self.acc_confort = 2.5
+        self.t_reaction = 0.5
         
     def move_along_trajectory(self, dt=0.1):
         if self.current_target_idx >= len(self.trajectory):
@@ -397,7 +399,6 @@ class Simulation:
         """Simulates changes in weather conditions and resets upon change"""
         conditions = ["clear", "rain", "fog", "heavy_fog"]
         condition_idx = (self.frame_count // 150)
-        print(condition_idx)
 
         if condition_idx >= len(conditions):
             plt.close(self.fig)  # Cierra la ventana de la animación
@@ -448,8 +449,8 @@ class Simulation:
                 self.vehicle.trajectory,
                 centerlane,
                 v_ego=self.vehicle.speed,
-                acc_confort=2.5,
-                t_reaction=0.5,
+                acc_confort=self.vehicle.acc_confort,
+                t_reaction=self.vehicle.t_reaction,
                 v_other=self.speed_obstacle,
                 priority=False
             )
@@ -597,12 +598,98 @@ class Simulation:
         self.visibility_data.clear()
         print(f"--- Resetting simulation due to weather change: {self.vehicle.perception.weather_condition} ---")
 
+    def plot_frame(self, target_frame): 
+        # Asegurarse de que el vehículo y el estado de la simulación comiencen desde el inicio
+        # para que cada llamada a plot_frame sea independiente.
+        # Una alternativa es guardar el estado completo y restaurarlo, pero reiniciar es más simple.
+        initial_pos = np.array([0.0, 0.0]) # Asumiendo posición inicial
+        self.vehicle.position = initial_pos
+        self.vehicle.current_target_idx = 0 # Reiniciar el índice del objetivo
+        self.frame_count = 0 # Reiniciar el contador de frames
+        self.vehicle.perception.weather_condition = "clear" # Reiniciar condición climática
+
+        # Avanzar la simulación hasta el frame deseado
+        for i in range(target_frame):
+            self.frame_count = i # Actualizar el frame_count para update_weather_conditions
+            self.update_weather_conditions()
+            self.vehicle.move_along_trajectory()
+        
+        # Una vez que el vehículo ha avanzado hasta el target_frame, dibujar la escena
+        self.ax.clear()
+        self.frame_count = target_frame # Asegurarse de que el frame_count refleje el frame actual para el título y la info
+
+        # Calculate visibility (needed for plotting the perception envelope)
+        angles, visibility, intersection_points = self.vehicle.perception.ray_cast_visibility(
+            self.vehicle.position, self.obstacles, self.centerlanes
+        )
+        # Calculate metrics (also for display in plot_scenario)
+        visible_ratio, avg_distance = self.calculate_visibility_metrics(angles, visibility)
+        
+        # Call plot_scenario to draw everything for the current frame
+        self.plot_scenario(angles, visibility, visible_ratio, avg_distance, intersection_points)
+
+        # Create polygons (for required envelope and visibility coefficient)
+        real_env = compute_visibility_polygon(self.vehicle.position, angles, visibility)
+        text_lines = []
+
+        for idx, centerlane in enumerate(self.centerlanes):
+            required_env = compute_required_envelope(
+                self.vehicle.position,
+                self.vehicle.trajectory,
+                centerlane,
+                v_ego=self.vehicle.speed,
+                acc_confort=self.vehicle.acc_confort,
+                t_reaction=self.vehicle.t_reaction,
+                v_other=self.speed_obstacle,
+                priority=False
+            )
+            
+            # Draw green points projected onto the lanes
+            for p in required_env:
+                self.ax.plot(p[0], p[1], 'go', markersize=5)
+            
+            # Calculate visibility coefficient
+            try:
+                C_v, (inter_init_point, inter_last_point) = compute_visibility_coefficient(
+                    intersection_points, required_env, centerlane
+                )
+            except TopologicalError:
+                C_v = 0.0
+                inter_init_point = inter_last_point = None
+
+            # Draw intersection segment if it exists
+            if inter_init_point is not None and inter_last_point is not None:
+                self.ax.plot(
+                    [inter_init_point[0], inter_last_point[0]],
+                    [inter_init_point[1], inter_last_point[1]],
+                    'b-o', markersize=2, linewidth=2, label=f'Intersection lane {idx+1}'
+                )
+            
+            # Save text for each lane
+            text_lines.append(f"Lane {idx+1}: C_v = {C_v:.2f}")
+
+        # Display all coefficients in the plot
+        text_str = "\n".join(text_lines)
+        self.ax.text(
+            0.7, 0.05, text_str,
+            transform=self.ax.transAxes,
+            verticalalignment='bottom',
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8)
+        )
+
+        # Display ego_trajectory
+        x, y = zip(*self.vehicle.trajectory)
+        self.ax.plot(x, y, 'ko-', markersize=2)
+
+        plt.show() # Make sure to show the plot for the single frame
+
+
 
 def rect_to_poly(rect):
     x, y, w, h = rect
     return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
 
-def compute_visibility_coefficient(real_env, required_env, centerlane):
+def compute_visibility_coefficient(real_env, required_env, centerlane, margin=1.0):
     """Calculates the visibility coefficient"""
 
     real_st = [global_to_st(p, centerlane) for p in real_env]
@@ -617,11 +704,24 @@ def compute_visibility_coefficient(real_env, required_env, centerlane):
         return 0.0, (None, None)
 
     # Calculate overlapping intervals in s
-    sA_min, sA_max = np.min(required_s), np.max(required_s)
-    sB_min, sB_max = np.min(real_s), np.max(real_s)
+    sA_min, sA_max = np.min(required_s), np.max(required_s) # Required distance to see
 
-    inter_min = max(sA_min, sB_min)
-    inter_max = min(sA_max, sB_max)
+     # ---- APPLY MARGIN ----
+    sA_min_expanded = sA_min - margin
+    sA_max_expanded = sA_max + margin
+
+    # ---- Extract real_s values inside expanded interval ----
+    real_inside = [s for s in real_s if sA_min_expanded <= s <= sA_max_expanded]
+
+    if len(real_inside) == 0:
+        # No part of the real segment lies in the expanded required range
+        return 0.0, (None, None)
+
+    sB_inside_min = np.min(real_inside)
+    sB_inside_max = np.max(real_inside)
+
+    inter_min = max(sA_min, sB_inside_min)
+    inter_max = min(sA_max, sB_inside_max)
 
     if inter_max <= inter_min:
         intersection_length = 0.0
