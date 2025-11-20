@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import math
 
+class WorldModel: 
+    def __init__(self, initial_pos=np.array([0.0, 0.0])):
+        self.vehicle = AutonomousVehicle()
+        self.centerlanes = []
 
 class AutonomousVehicle:
     def __init__(self, initial_pos=np.array([0.0, 0.0])):
@@ -482,7 +486,6 @@ class Simulation:
         self.plot_scenario(angles, visibility, visible_ratio, avg_distance, intersection_points)
 
         # Create polygons
-        real_env = compute_visibility_polygon(self.vehicle.position, angles, visibility)
         text_lines = []
 
         for idx, centerlane in enumerate(self.centerlanes):
@@ -815,6 +818,40 @@ def st_to_global(s, t, centerlane):
     return origin + R @ np.array([s, t])
 
 def compute_required_envelope(ego_pos, trajectory, centerlane, v_ego, acc_confort, t_reaction, v_other, priority=False):
+    """
+    Calculates the minimum required perception envelope based on the intersection
+    of the ego's trajectory with the centerlanes and the required minimum distance.
+    """
+    d_required = compute_drequired_for_trajectory(v_ego, acc_confort, priority, t_reaction, v_other)
+    ego_line = LineString(trajectory)  # your trajectory
+    envelope_points = []
+
+    lane_line = LineString(centerlane)
+    inter = ego_line.intersection(lane_line)
+    
+    # If it's an intersection point
+    if not isinstance(inter,Point):
+        return envelope_points 
+
+    if isinstance(inter, Point):
+        envelope_points.append(np.array([inter.x, inter.y]))
+        # We project backwards a distance d_required in the direction of the lane
+        direction = np.array(centerlane[1]) - np.array(centerlane[0])
+        direction = direction / np.linalg.norm(direction)
+        projected_point = np.array([inter.x, inter.y]) - d_required * direction
+        envelope_points.append(projected_point)
+    
+    # If there are multiple points (LineString/ MultiPoint)
+    else:
+        for p in inter.geoms:
+            direction = np.array(centerlane[1]) - np.array(centerlane[0])
+            direction = direction / np.linalg.norm(direction)
+            projected_point = np.array([p.x, p.y]) + d_required * direction
+            envelope_points.append(projected_point)
+
+    return envelope_points  # list of np.array with the green points to draw
+
+def compute_required_envelope_relative_position(trajectory, centerlane, v_ego, acc_confort, t_reaction, v_other, priority=False):
     """
     Calculates the minimum required perception envelope based on the intersection
     of the ego's trajectory with the centerlanes and the required minimum distance.
