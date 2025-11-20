@@ -5,12 +5,12 @@ from common_utils import Simulation
 # Run simulation
 print("Starting perception envelope evolution simulation...")
 sim = Simulation("bus_overtaking")
-sim.ego_set_speed(5)
+sim.ego_set_speed(6)
 
-sim.plot_frame(50)
+# sim.plot_frame(20)
 
 ANIMATION = False
-RECORD = False
+RECORD = True
 
 if ANIMATION: 
     # Create animation
@@ -18,8 +18,9 @@ if ANIMATION:
     plt.show()
 
 if RECORD: 
+    animation = FuncAnimation(sim.fig, sim.update, frames=601, interval=1, blit=False)
     # Crear un escritor (opcional: puedes ajustar fps, bitrate, etc.)
     writer = FFMpegWriter(fps=30, bitrate=1800)
 
     # Guardar la animación
-    animation.save("simulation.mp4", writer=writer)
+    animation.save("bus_overtaking.mp4", writer=writer)

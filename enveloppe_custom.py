@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from common_utils import Simulation
+from matplotlib.animation import FuncAnimation, FFMpegWriter
+from common_utils import Simulation, Centerlane
 
 # Run simulation
 print("Starting perception envelope evolution simulation...")
@@ -13,26 +13,46 @@ bus = [
     ]
 
 new_trajectory = [
-            (0.0, 0.0),
-            (5.0, 0.0),
+            (-20.0, 0.0),
             (10.0, 0.0),
-            (15.0, 0.0),
             (20.0, 0.0),
-            (25.0, 0.0)
+            (30.0, 0.0),
+            (40.0, 0.0),
+            (100.0, 0.0)
         ]
-initial_point = (50,20)
-final_point = (20,30)
-centerlane = [initial_point, final_point]
 
-sim.add_obstacle(bus)
+initial_point = (50,-50)
+final_point = (20,50)
+centerlane1 = Centerlane(initial_point, final_point, 3.0)
+
+initial_point = (8,50)
+final_point =(15,-50)
+centerlane2 = Centerlane(initial_point, final_point, 10.0)
+
+initial_point = (80,50)
+final_point =(80,-50)
+centerlane3 = Centerlane(initial_point, final_point, 5.0)
+
+# sim.add_obstacle(bus)
 sim.set_trajectory(new_trajectory)
-sim.add_centerlane(centerlane)
+sim.add_centerlane(centerlane1)
+sim.add_centerlane(centerlane2)
+sim.add_centerlane(centerlane3)
 
+# sim.plot_frame(10)
 
-# Create animation
-animation = FuncAnimation(sim.fig, sim.update, frames=600, interval=1, blit=False)
+ANIMATION = False
+RECORD = True
 
-plt.show()
+if ANIMATION: 
+    # Create animation
+    animation = FuncAnimation(sim.fig, sim.update, frames=601, interval=1, blit=False)
+    plt.show()
 
-# At the end, show evolution graphs
-# plot_visibility_evolution(sim)
+if RECORD: 
+    animation = FuncAnimation(sim.fig, sim.update, frames=601, interval=1, blit=False)
+    # Crear un escritor (opcional: puedes ajustar fps, bitrate, etc.)
+    writer = FFMpegWriter(fps=30, bitrate=1800)
+
+    # Guardar la animación
+    animation.save("custom_usecase.mp4", writer=writer)

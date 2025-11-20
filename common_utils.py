@@ -47,6 +47,7 @@ class AutonomousVehicle:
     
     def redefined_trajectory(self, trajectory): 
         self.trajectory = trajectory
+        self.position = trajectory[0]
     
     def set_speed(self,speed):
         self.speed = speed
@@ -85,7 +86,7 @@ class VehiclePerception:
                     min_distance = intersection_dist
             
             for centerlane in centerlanes:
-                intersection_dist, point = self.ray_centerlane_intersection(ego_pos, ray_end, centerlane)
+                intersection_dist, point = self.ray_centerlane_intersection(ego_pos, ray_end, centerlane.segment)
                 if intersection_dist is not None and intersection_dist < min_distance:
                     # min_distance = intersection_dist
                     intersection_point = point 
@@ -93,6 +94,29 @@ class VehiclePerception:
             visibility_map[i] = min_distance
 
         return angles, visibility_map, visibility_points
+
+    def ray_cast_visibility_simplified(self, ego_pos, obstacles, centerlanes):
+        """Performs ray casting to determine visible and occluded areas considering only bounding boxes and relative position"""
+        slopes = []
+
+        for x, y in obstacles.vertices:
+            if x == 0:
+                slopes.append(float('inf') if y > 0 else -float('inf'))
+            else:
+                slopes.append(y / x)
+
+        # return min(slopes), max(slopes)
+    
+        angle_min = np.arctan2(min(slopes), 1.0)
+        angle_max = np.arctan2(max(slopes), 1.0)
+
+        angles = [angle_min,angle_max]
+        effective_range = self.get_effective_range()
+        visibility_points = [] 
+
+        ray_end = ego_pos + effective_range * np.array([np.cos(angles), np.sin(angles)])
+        # To do: manage multiples oclusions 
+        return angles, visibility_points
     
     def ray_rectangle_intersection(self, ray_start, ray_end, rectangle):
         """Calculates intersection between ray and rectangle (bounding box)"""
@@ -178,6 +202,24 @@ class VehiclePerception:
         
         return None
 
+class Obstacle:
+    def __init__(self, center, length, width):
+        cx, cy = center
+        L = length / 2
+        W = width / 2
+
+        self.vertices = [
+            (cx - L, cy - W),  # bottom-left
+            (cx - L, cy + W),  # top-left
+            (cx + L, cy + W),  # top-right
+            (cx + L, cy - W)   # bottom-right
+        ]
+
+class Centerlane:
+    def __init__(self, initial_point, final_point, speed_obstacle = 10.0):
+        self.segment = [initial_point, final_point] # relative to ego
+        self.speed_obstacle = speed_obstacle # m/s
+
 class Simulation:
     def __init__(self, usecase):
         if usecase == "empty":
@@ -217,16 +259,16 @@ class Simulation:
                 (50.0 + (ego_lane_width + 50.0 + 2*ego_lane_width)/math.tan(angle), 50.0), 
                 (50.0 - 50/math.tan(angle) + 2*ego_lane_width/math.tan(angle), -50.0),
                 (100.0, -50.0), 
-                (100.0, 50.0)
+                (250.0, 50.0)
             ]
 
             initial_point = (50.0 + ((ego_lane_width*3/2)-50.0)/math.tan(angle), -50.0)
             final_point = (50.0 - 50/math.tan(angle) + (100+ego_lane_width+ ego_lane_width*3/2)/math.tan(angle), 50.0)
-            up = [initial_point, final_point]
+            up = Centerlane (initial_point, final_point, self.speed_obstacle)
 
             initial_point = (50.0 + (ego_lane_width+50.0+(ego_lane_width*1/2))/math.tan(angle), 50.0)
             final_point = (50.0 + ((ego_lane_width*1/2) - 50.0)/math.tan(angle), -50.0)
-            down = [initial_point, final_point]
+            down = Centerlane (initial_point, final_point, self.speed_obstacle)
 
             # Other obstacles (buildings, other vehicles)
             self.obstacles = [
@@ -259,7 +301,7 @@ class Simulation:
 
             initial_point = (34.0, -18.0)
             final_point = (34.0, 15.0)
-            pedestrian = [initial_point, final_point]
+            pedestrian = Centerlane (initial_point, final_point, self.speed_obstacle)
             
             # np.array([[initial_point],   # initial point
             #                       [final_point]])  # final point
@@ -279,11 +321,11 @@ class Simulation:
         elif usecase == "lane_change_highway": 
             self.fig, self.ax = plt.subplots(figsize=(12, 8))
             self.vehicle = AutonomousVehicle()
-            self.speed_obstacle = 20.0
+            self.speed_obstacle = 36.0
             lane_change = [
                 (0.0, 0.0),
-                (0.0, 1.0),
                 (0.0, 2.0),
+                (0.0, 2.5),
                 (0.0, 3.0),
                 (0.0, 4.0),
                 (0.0, 5.0)
@@ -291,7 +333,7 @@ class Simulation:
 
             self.vehicle.redefined_trajectory(lane_change)
 
-            # New bus obstacle
+            # New truck obstacle
             angle = np.pi/3
             ego_lane_width = 7.5
             car_front = [
@@ -302,15 +344,15 @@ class Simulation:
             ]
 
             car_rear = [
-                (-20.0, -ego_lane_width/2), 
-                (-15.0, -ego_lane_width/2),
-                (-15.0, -ego_lane_width/2 - 2.0),
-                (-20, -ego_lane_width/2 - 2.0), 
+                (-20.0 -10, -1.4), 
+                (-10.0-10, -1.4),
+                (-10.0 -10, 1.4),
+                (-20-10 , 1.4), 
             ]
 
-            initial_point = (-50.0, 2.0)
-            final_point = (50.0, 2.0)
-            left_lane = [initial_point, final_point]
+            initial_point = (-50.0, 3.5)
+            final_point = (50.0, 3.5)
+            left_lane = Centerlane (initial_point, final_point, self.speed_obstacle)
 
             # Other obstacles (buildings, other vehicles)
             self.obstacles = [
@@ -342,11 +384,11 @@ class Simulation:
             ]
             initial_point = (55.0, -50.0)
             final_point = (55.0 , 50.0)
-            up = [initial_point, final_point]
+            up = Centerlane (initial_point, final_point, self.speed_obstacle)
 
             initial_point = (52.0 , 50.0)
             final_point = (52.0 , -50.0)
-            down = [initial_point, final_point]
+            down = Centerlane (initial_point, final_point, self.speed_obstacle)
             
             # np.array([[initial_point],   # initial point
             #                       [final_point]])  # final point
@@ -447,11 +489,11 @@ class Simulation:
             required_env = compute_required_envelope(
                 self.vehicle.position,
                 self.vehicle.trajectory,
-                centerlane,
+                centerlane.segment,
                 v_ego=self.vehicle.speed,
                 acc_confort=self.vehicle.acc_confort,
                 t_reaction=self.vehicle.t_reaction,
-                v_other=self.speed_obstacle,
+                v_other=centerlane.speed_obstacle,
                 priority=False
             )
             
@@ -462,7 +504,7 @@ class Simulation:
             # Calculate visibility coefficient
             try:
                 C_v, (inter_init_point, inter_last_point) = compute_visibility_coefficient(
-                    intersection_points, required_env, centerlane
+                    intersection_points, required_env, centerlane.segment
                 )
             except TopologicalError:
                 C_v = 0.0
@@ -473,7 +515,7 @@ class Simulation:
                 self.ax.plot(
                     [inter_init_point[0], inter_last_point[0]],
                     [inter_init_point[1], inter_last_point[1]],
-                    'b-o', markersize=2, linewidth=2, label=f'Intersection lane {idx+1}'
+                    'purple', markersize=5, linewidth=2, label=f'Intersection lane {idx+1}'
                 )
             
             # Save text for each lane
@@ -511,7 +553,7 @@ class Simulation:
         
         # Draw centerlanes
         for idx, centerlane in enumerate(self.centerlanes):
-            init_point, final_point = centerlane
+            init_point, final_point = centerlane.segment
             dx = final_point[0] - init_point[0]
             dy = final_point[1] - init_point[1]
 
@@ -584,8 +626,7 @@ class Simulation:
         info_text = (f"Frame: {self.frame_count}\n"
                     f"Condition: {self.vehicle.perception.weather_condition}\n"
                     f"Effective Range: {effective_range:.1f}m\n"
-                    f"Visible Area: {visible_ratio*100:.1f}%\n"
-                    f"Avg. Visible Dist: {avg_distance:.1f}m")
+                    f"Visible Area: {visible_ratio*100:.1f}%\n")
         
         self.ax.text(0.02, 0.98, info_text, transform=self.ax.transAxes, 
                     verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
@@ -601,9 +642,8 @@ class Simulation:
     def plot_frame(self, target_frame): 
         # Asegurarse de que el vehículo y el estado de la simulación comiencen desde el inicio
         # para que cada llamada a plot_frame sea independiente.
-        # Una alternativa es guardar el estado completo y restaurarlo, pero reiniciar es más simple.
-        initial_pos = np.array([0.0, 0.0]) # Asumiendo posición inicial
-        self.vehicle.position = initial_pos
+
+        self.vehicle.position = self.vehicle.trajectory[0]
         self.vehicle.current_target_idx = 0 # Reiniciar el índice del objetivo
         self.frame_count = 0 # Reiniciar el contador de frames
         self.vehicle.perception.weather_condition = "clear" # Reiniciar condición climática
@@ -636,11 +676,11 @@ class Simulation:
             required_env = compute_required_envelope(
                 self.vehicle.position,
                 self.vehicle.trajectory,
-                centerlane,
+                centerlane.segment,
                 v_ego=self.vehicle.speed,
                 acc_confort=self.vehicle.acc_confort,
                 t_reaction=self.vehicle.t_reaction,
-                v_other=self.speed_obstacle,
+                v_other=centerlane.speed_obstacle,
                 priority=False
             )
             
@@ -651,7 +691,7 @@ class Simulation:
             # Calculate visibility coefficient
             try:
                 C_v, (inter_init_point, inter_last_point) = compute_visibility_coefficient(
-                    intersection_points, required_env, centerlane
+                    intersection_points, required_env, centerlane.segment
                 )
             except TopologicalError:
                 C_v = 0.0
@@ -662,7 +702,7 @@ class Simulation:
                 self.ax.plot(
                     [inter_init_point[0], inter_last_point[0]],
                     [inter_init_point[1], inter_last_point[1]],
-                    'b-o', markersize=2, linewidth=2, label=f'Intersection lane {idx+1}'
+                    'purple', markersize=5, linewidth=2, label=f'Intersection lane {idx+1}'
                 )
             
             # Save text for each lane
@@ -689,10 +729,14 @@ def rect_to_poly(rect):
     x, y, w, h = rect
     return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
 
-def compute_visibility_coefficient(real_env, required_env, centerlane, margin=1.0):
+def compute_visibility_coefficient(real_env, required_env, centerlane, margin=4.0):
     """Calculates the visibility coefficient"""
 
     real_st = [global_to_st(p, centerlane) for p in real_env]
+    # Filter real_env points: keep only those close to the centerlane (t ≈ 0)
+    t_threshold = 0.2  # ajusta si quieres
+    real_st = [(s, t) for (s, t) in real_st if abs(t) <= t_threshold]
+
     required_st = [global_to_st(p, centerlane) for p in required_env]
 
     # Extract only the longitudinal s-axis
